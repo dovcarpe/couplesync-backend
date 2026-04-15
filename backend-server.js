@@ -320,7 +320,7 @@ app.post('/api/checkin', auth, (req, res) => {
 
 app.get('/api/streak', auth, (req, res) => {
   const couple = getCouple(req);
-  if (!couple) return res.status(404).json({ error: 'No couple' });
+    if (!couple) return res.json({ currentStreak: 0, longestStreak: 0 });
   res.json(db.streaks[couple.id] || { currentStreak: 0, longestStreak: 0 });
 });
 
