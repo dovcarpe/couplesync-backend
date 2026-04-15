@@ -827,7 +827,7 @@ export default function App() {
 
   useEffect(() => {
     if (!auth.token) return;
-    api("/streak", "GET", null, auth.token).then(setStreak).catch(() => {});
+    api("/streak", "GET", null, auth.token).then(setStreak).catch((err) => { if (err?.error === "No couple") setStreak({ currentStreak: 0, longestStreak: 0 }); });
   }, [auth.token]);
 
   useEffect(() => {
