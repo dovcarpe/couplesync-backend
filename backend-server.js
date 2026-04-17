@@ -162,7 +162,7 @@ function auth(req, res, next) {
     }
 }
 
-async function (req) {
+async function getCouple(req) {
     const { rows: users } = await pool.query('SELECT couple_id FROM users WHERE id = $1', [req.user.userId]);
     if (!users.length || !users[0].couple_id) return null;
     const { rows: couples } = await pool.query('SELECT * FROM couples WHERE id = $1', [users[0].couple_id]);
