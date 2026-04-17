@@ -377,11 +377,11 @@ app.post('/api/goals', auth, async (req, res) => {
 app.put('/api/goals/:id', auth, async (req, res) => {
     try {
           const couple = await getCouple(req);
-          const { title, targetAmount, progress, completed } = req.body;
+          const { progress, completed } = req.body;
           const { rows: old } = await pool.query('SELECT progress FROM goals WHERE id = $1', [req.params.id]);
           const oldProgress = old[0] ? parseFloat(old[0].progress) : 0;
-          await pool.query('UPDATE goals SET title=$1, target_amount=$2, progress=$3, completed=$4 WHERE id=$5 AND couple_id=$6',
-                                 [title, targetAmount, progress, completed, req.params.id, couple.id]);
+          await pool.query('UPDATE goals SET progress=$1, completed=$2 WHERE id=$3 AND couple_id=$4',
+                                 [progress, completed, req.params.id, couple.id]);
           const { rows } = await pool.query('SELECT * FROM goals WHERE id = $1', [req.params.id]);
           if (!rows.length) return res.status(404).json({ error: 'Not found' });
           const goal = rows[0];
