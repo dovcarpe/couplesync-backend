@@ -13,7 +13,7 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json())
 
 const JWT_SECRET = process.env.JWT_SECRET || 'couples-app-secret-change-in-production';
 
@@ -248,7 +248,7 @@ app.get('/api/dashboard', auth, async (req, res) => {
           const { rows: streakRows } = await pool.query('SELECT * FROM streaks WHERE couple_id = $1', [couple.id]);
           const streak = streakRows[0] || { current_streak: 0, longest_streak: 0 };
           const { rows: todayTasks } = await pool.query('SELECT * FROM tasks WHERE couple_id = $1 AND completed = false LIMIT 5', [couple.id]);
-          const { rows: upcomingEvents } = await pool.query("SELECT * FROM events WHERE couple_id = $1 AND date >= NOW()::DATE ORDER BY date LIMIT 3", [couple.id]);
+          const { rows: upcomingEvents } = await pool.query("SELECT * FROM events WHERE couple_id = $1 AND date::DATE >= NOW()::DATE ORDER BY date LIMIT 3", [couple.id]);
           const { rows: recentMessages } = await pool.query('SELECT * FROM messages WHERE couple_id = $1 ORDER BY created_at DESC LIMIT 10', [couple.id]);
           const { rows: activeGoals } = await pool.query('SELECT * FROM goals WHERE couple_id = $1 AND completed = false LIMIT 5', [couple.id]);
           res.json({ streak: { currentStreak: streak.current_streak, longestStreak: streak.longest_streak }, todayTasks, upcomingEvents, recentMessages, goals: activeGoals });
