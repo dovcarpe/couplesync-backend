@@ -764,6 +764,21 @@ app.post('/api/push/notify-message', auth, async (req, res) => {
     res.json({ success: true });
 });
 
+// —— Calendar Disconnect ——————————————————————————————————————————
+app.delete('/api/calendar/disconnect', auth, async (req, res) => {
+        try {
+                    const userId = req.user.userId;
+                    await pool.query(
+                                    'UPDATE users SET google_access_token = NULL, google_refresh_token = NULL WHERE id = $1',
+                                    [userId]
+                                );
+                    res.json({ ok: true, message: 'Google Calendar disconnected' });
+        } catch (e) {
+                    console.error('Calendar disconnect error:', e);
+                    res.status(500).json({ error: 'Failed to disconnect Google Calendar' });
+        }
+});
+
 // ─── Server Start ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => console.log(`✅ Couples App API running on port ${PORT}`));
