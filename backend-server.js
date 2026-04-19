@@ -25,6 +25,20 @@ const pool = new Pool({
           : false,
 });
 
+// —— DB migrations (safe to run multiple times) ——
+async function migrateDB() {
+  const migrations = [
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_access_token TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_refresh_token TEXT",
+    "ALTER TABLE events ADD COLUMN IF NOT EXISTS google_event_id TEXT",
+    "ALTER TABLE events ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'event'",
+  ];
+  for (const sql of migrations) {
+    try { await pool.query(sql); } catch(e) { /* column may already exist */ }
+  }
+}
+
+
 async function initDB() {
     await pool.query(`
         CREATE TABLE IF NOT EXISTS users (
@@ -106,6 +120,7 @@ async function initDB() {
 }
 
 initDB().catch(err => console.error('DB init error:', err));
+migrateDB();
 
 // ─── Web Push Setup ───────────────────────────────────────────────────────────
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
@@ -566,6 +581,158 @@ async function pushPartner(coupleId, senderId, payload) {
     const partnerId = rows[0].partner1_id === senderId ? rows[0].partner2_id : rows[0].partner1_id;
     await pushNotify(partnerId, payload);
 }
+
+
+// —— Couple Disconnect ——————————————————————————————————————
+app.post('/api/couple/disconnect', auth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    // Get user's couple_id
+    const userRes = await pool.query('SELECT couple_id FROM users WHERE id = $1', [userId]);
+    const coupleId = userRes.rows[0]?.couple_id;
+    if (!coupleId) return res.json({ ok: true });
+    // Clear couple_id from both partners
+    await pool.query('UPDATE users SET couple_id = NULL WHERE couple_id = $1', [coupleId]);
+    // Remove couple row
+    await pool.query('DELETE FROM couples WHERE id = $1', [coupleId]);
+    res.json({ ok: true, message: 'Disconnected from partner' });
+  } catch (e) {
+    console.error('Disconnect error:', e);
+    res.status(500).json({ error: 'Failed to disconnect' });
+  }
+});
+
+// —— Google Calendar ——————————————————————————————————————————
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'https://couplesync-backend-production.up.railway.app/api/calendar/callback';
+
+app.get('/api/calendar/status', auth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const result = await pool.query(
+      'SELECT google_access_token FROM users WHERE id = $1', [userId]
+    );
+    const connected = !!result.rows[0]?.google_access_token;
+    res.json({ connected });
+  } catch (e) {
+    res.json({ connected: false });
+  }
+});
+
+app.get('/api/calendar/auth-url', auth, async (req, res) => {
+  if (!GOOGLE_CLIENT_ID) {
+    return res.status(503).json({ error: 'Google Calendar not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to Railway environment variables.' });
+  }
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_REDIRECT_URI,
+    response_type: 'code',
+    scope: 'https://www.googleapis.com/auth/calendar',
+    access_type: 'offline',
+    prompt: 'consent',
+    state: req.user.userId,
+  });
+  res.json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString() });
+});
+
+app.get('/api/calendar/callback', async (req, res) => {
+  const { code, state: userId } = req.query;
+  if (!code || !userId) return res.status(400).send('Missing code or state');
+  try {
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: GOOGLE_REDIRECT_URI, grant_type: 'authorization_code',
+      }),
+    });
+    const tokens = await tokenRes.json();
+    if (!tokens.access_token) return res.status(400).send('Failed to get token');
+    // Store token
+    await pool.query(
+      'UPDATE users SET google_access_token = $1, google_refresh_token = $2 WHERE id = $3',
+      [tokens.access_token, tokens.refresh_token || null, userId]
+    );
+    res.send('<html><body><h2>✅ Google Calendar connected!</h2><p>You can close this tab and return to CoupleSync.</p></body></html>');
+  } catch (e) {
+    console.error('Calendar callback error:', e);
+    res.status(500).send('Error connecting Google Calendar');
+  }
+});
+
+app.post('/api/calendar/sync', auth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userRes = await pool.query(
+      'SELECT google_access_token, google_refresh_token, couple_id FROM users WHERE id = $1', [userId]
+    );
+    const user = userRes.rows[0];
+    if (!user?.google_access_token) return res.status(400).json({ error: 'Google Calendar not connected' });
+
+    // Fetch events from Google Calendar
+    const gcRes = await fetch(
+      'https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=20&orderBy=startTime&singleEvents=true&timeMin=' + new Date().toISOString(),
+      { headers: { Authorization: 'Bearer ' + user.google_access_token } }
+    );
+    const gcData = await gcRes.json();
+
+    if (gcData.error?.code === 401 && user.google_refresh_token) {
+      // Try to refresh token
+      const refreshRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+          refresh_token: user.google_refresh_token, grant_type: 'refresh_token' }),
+      });
+      const refreshed = await refreshRes.json();
+      if (refreshed.access_token) {
+        await pool.query('UPDATE users SET google_access_token = $1 WHERE id = $2', [refreshed.access_token, userId]);
+      }
+      return res.status(401).json({ error: 'Token refreshed, please retry sync' });
+    }
+
+    const gcEvents = (gcData.items || []).map(item => ({
+      id: 'gc_' + item.id,
+      title: item.summary || 'Google Calendar Event',
+      date: (item.start?.date || item.start?.dateTime || '').substring(0, 10),
+      description: item.description || '',
+      type: 'google',
+      couple_id: user.couple_id,
+    }));
+
+    // Also push local couple events to Google Calendar
+    if (user.couple_id) {
+      const localRes = await pool.query(
+        'SELECT * FROM events WHERE couple_id = $1 AND type != $2 ORDER BY date DESC LIMIT 10',
+        [user.couple_id, 'google']
+      );
+      for (const ev of localRes.rows) {
+        if (!ev.google_event_id) {
+          const pushRes = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + user.google_access_token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              summary: ev.title,
+              start: { date: ev.date },
+              end: { date: ev.date },
+              description: ev.description || '',
+            }),
+          });
+          const pushed = await pushRes.json();
+          if (pushed.id) {
+            await pool.query('UPDATE events SET google_event_id = $1 WHERE id = $2', [pushed.id, ev.id]);
+          }
+        }
+      }
+    }
+
+    res.json({ events: gcEvents, synced: gcEvents.length });
+  } catch (e) {
+    console.error('Calendar sync error:', e);
+    res.status(500).json({ error: 'Sync failed' });
+  }
+});
 
 app.post('/api/push/subscribe', auth, async (req, res) => {
     await pool.query('INSERT INTO push_subscriptions (user_id, subscription) VALUES ($1,$2) ON CONFLICT (user_id) DO UPDATE SET subscription = $2',
