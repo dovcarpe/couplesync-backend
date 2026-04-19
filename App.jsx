@@ -749,6 +749,193 @@ function MotivationPage({ token, partner }) {
   );
 }
 
+// —— Settings Page ————————————————————————————————————————————
+function SettingsPage({ token, user, onUpdate }) {
+    const [profile, setProfile] = useState({ name: user?.name || "", loveLanguage: user?.loveLanguage || "words-of-affirmation" });
+    const [calStatus, setCalStatus] = useState(null);
+    const [calLoading, setCalLoading] = useState(false);
+    const [calMsg, setCalMsg] = useState("");
+    const [profileMsg, setProfileMsg] = useState("");
+    const [disconnectMsg, setDisconnectMsg] = useState("");
+
+    const loveLanguages = [
+      { value: "words-of-affirmation", label: "Words of Affirmation 💬" },
+      { value: "acts-of-service", label: "Acts of Service ⚡" },
+      { value: "receiving-gifts", label: "Receiving Gifts 🎁" },
+      { value: "quality-time", label: "Quality Time 🕰️" },
+      { value: "physical-touch", label: "Physical Touch 🤗" },
+        ];
+
+    useEffect(() => {
+          api("/calendar/status", "GET", null, token)
+            .then(d => setCalStatus(d.connected))
+            .catch(() => setCalStatus(false));
+    }, [token]);
+
+    async function handleProfileSave(e) {
+          e.preventDefault();
+          try {
+                  const updated = await api("/profile", "PUT", profile, token);
+                  onUpdate(updated);
+                  setProfileMsg("✅ Profile saved!");
+                  setTimeout(() => setProfileMsg(""), 3000);
+          } catch (err) {
+                  setProfileMsg("❌ Failed to save profile.");
+          }
+    }
+
+    async function handleConnectGoogle() {
+          setCalLoading(true);
+          setCalMsg("");
+          try {
+                  const data = await api("/calendar/auth-url", "GET", null, token);
+                  window.open(data.url, "_blank", "width=500,height=600");
+                  setCalMsg("🔗 Google sign-in opened. Complete it and come back, then click Refresh Status.");
+          } catch (err) {
+                  setCalMsg("❌ " + (err?.error || err?.message || "Could not connect Google Calendar. Make sure GOOGLE_CLIENT_ID is set in Railway."));
+          } finally {
+                  setCalLoading(false);
+          }
+    }
+
+    async function handleDisconnectGoogle() {
+          if (!window.confirm("Disconnect Google Calendar?")) return;
+          setCalLoading(true);
+          try {
+                  await api("/calendar/disconnect", "DELETE", null, token);
+                  setCalStatus(false);
+                  setCalMsg("✅ Google Calendar disconnected.");
+          } catch (err) {
+                  setCalMsg("❌ Failed to disconnect.");
+          } finally {
+                  setCalLoading(false);
+          }
+    }
+
+    async function handleSyncCalendar() {
+          setCalLoading(true);
+          setCalMsg("");
+          try {
+                  const result = await api("/calendar/sync", "POST", null, token);
+                  setCalMsg("✅ Synced " + (result.imported || 0) + " events from Google Calendar.");
+          } catch (err) {
+                  if (err?.error === "Token refreshed, please retry") {
+                            setCalMsg("🔄 Token refreshed. Tap Sync again.");
+                  } else {
+                            setCalMsg("❌ " + (err?.error || "Sync failed."));
+                  }
+          } finally {
+                  setCalLoading(false);
+          }
+    }
+
+    async function handleRefreshStatus() {
+          try {
+                  const d = await api("/calendar/status", "GET", null, token);
+                  setCalStatus(d.connected);
+                  setCalMsg(d.connected ? "✅ Google Calendar is connected!" : "Not connected yet.");
+          } catch {
+                  setCalMsg("Could not check status.");
+          }
+    }
+
+    async function handleDisconnectPartner() {
+          if (!window.confirm("Are you sure you want to disconnect from your partner? This cannot be undone.")) return;
+          try {
+                  await api("/couple/disconnect", "POST", null, token);
+                  setDisconnectMsg("✅ Disconnected. Please sign out and sign back in.");
+          } catch (err) {
+                  setDisconnectMsg("❌ Failed to disconnect.");
+          }
+    }
+
+    return (
+          <div className="page">
+                <h2>⚙️ Settings</h2>h2>
+          
+                <div className="card">
+                        <h3>👤 Profile</h3>h3>
+                        <form onSubmit={handleProfileSave}>
+                                  <div className="form-row" style={{ flexDirection: "column", gap: "10px" }}>
+                                              <label style={{ fontSize: "0.85rem", opacity: 0.7 }}>Display Name</label>label>
+                                              <input
+                                                              placeholder="Your name"
+                                                              value={profile.name}
+                                                              onChange={e => setProfile({ ...profile, name: e.target.value })}
+                                                            />
+                                              <label style={{ fontSize: "0.85rem", opacity: 0.7 }}>Love Language</label>label>
+                                              <select
+                                                              value={profile.loveLanguage}
+                                                              onChange={e => setProfile({ ...profile, loveLanguage: e.target.value })}
+                                                            >
+                                                {loveLanguages.map(l => (
+                                                                              <option key={l.value} value={l.value}>{l.label}</option>option>
+                                                                            ))}
+                                              </select>
+                                  </div>div>
+                                  <div className="form-actions" style={{ marginTop: "12px" }}>
+                                              <button type="submit" className="btn-primary">Save Profile</button>button>
+                                  </div>div>
+                          {profileMsg && <p style={{ marginTop: "8px", fontSize: "0.9rem" }}>{profileMsg}</p>p>}
+                        </form>form>
+                </div>div>
+          
+                <div className="card">
+                        <h3>📅 Google Calendar</h3>h3>
+                        <p style={{ fontSize: "0.85rem", opacity: 0.7, marginBottom: "12px" }}>
+                                  Status: {calStatus === null ? "Checking..." : calStatus ? "🟢 Connected" : "🔴 Not connected"}
+                        </p>p>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                          {!calStatus ? (
+                        <button
+                                        className="btn-primary"
+                                        onClick={handleConnectGoogle}
+                                        disabled={calLoading}
+                                      >
+                          {calLoading ? "Opening..." : "🔗 Connect Google Calendar"}
+                        </button>button>
+                      ) : (
+                        <>
+                                      <button
+                                                        className="btn-primary"
+                                                        onClick={handleSyncCalendar}
+                                                        disabled={calLoading}
+                                                      >
+                                        {calLoading ? "Syncing..." : "🔄 Sync Now"}
+                                      </button>button>
+                                      <button
+                                                        className="btn-secondary"
+                                                        onClick={handleDisconnectGoogle}
+                                                        disabled={calLoading}
+                                                      >
+                                                      Disconnect
+                                      </button>button>
+                        </>>
+                      )}
+                                  <button
+                                                className="btn-secondary"
+                                                onClick={handleRefreshStatus}
+                                              >
+                                              Refresh Status
+                                  </button>button>
+                        </div>div>
+                  {calMsg && <p style={{ marginTop: "10px", fontSize: "0.9rem" }}>{calMsg}</p>p>}
+                </div>div>
+          
+                <div className="card">
+                        <h3>💔 Partner</h3>h3>
+                        <p style={{ fontSize: "0.85rem", opacity: 0.7, marginBottom: "12px" }}>
+                                  Disconnect from your current partner. You can reconnect with a new code afterwards.
+                        </p>p>
+                        <button className="btn-secondary" style={{ color: "#e74c3c" }} onClick={handleDisconnectPartner}>
+                                  Disconnect from Partner
+                        </button>button>
+                  {disconnectMsg && <p style={{ marginTop: "8px", fontSize: "0.9rem" }}>{disconnectMsg}</p>p>}
+                </div>div>
+          </div>div>
+        );
+}</></div>
+
 // ─── Push Notification Helpers ────────────────────────────────────────────────
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || "";
 
@@ -890,6 +1077,7 @@ export default function App() {
     { id: "messages", label: "Messages", icon: "💬" },
     { id: "motivation", label: "Motivation", icon: "💡" },
     { id: "budget", label: "Budget", icon: "💰" },
+    { id: "settings", label: "Settings", icon: "⚙️" },
   ];
 
   return (
@@ -932,6 +1120,7 @@ export default function App() {
         {page === "messages" && <MessagesPage token={auth.token} user={auth.user} partner={auth.partner} wsEvents={wsEvent} />}
         {page === "motivation" && <MotivationPage token={auth.token} partner={auth.partner} />}
         {page === "budget" && <BudgetPage token={auth.token} user={auth.user} partner={auth.partner} wsEvents={wsEvent} />}
+        {page === "settings" && <SettingsPage token={auth.token} user={auth.user} onUpdate={(u) => setAuth(prev => ({ ...prev, user: u }))} />}
       </main>
 
       {toast && <Toast message={toast} onDone={() => setToast(null)} />}
