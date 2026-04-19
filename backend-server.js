@@ -216,6 +216,24 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// —— Profile Update ——————————————————————————————————————————
+app.put('/api/profile', auth, async (req, res) => {
+  try {
+    const { name, loveLanguage } = req.body;
+    const userId = req.user.userId;
+    await pool.query(
+      'UPDATE users SET name = $1, love_language = $2 WHERE id = $3',
+      [name, loveLanguage, userId]
+    );
+    const result = await pool.query('SELECT id, name, email, love_language FROM users WHERE id = $1', [userId]);
+    const u = result.rows[0];
+    res.json({ id: u.id, name: u.name, email: u.email, loveLanguage: u.love_language });
+  } catch (e) {
+    console.error('Profile update error:', e);
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
 app.post('/api/couple/join', auth, async (req, res) => {
     try {
           const { inviteCode } = req.body;
