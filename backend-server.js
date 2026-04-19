@@ -32,6 +32,8 @@ async function migrateDB() {
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_refresh_token TEXT",
     "ALTER TABLE events ADD COLUMN IF NOT EXISTS google_event_id TEXT",
     "ALTER TABLE events ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'event'",
+    "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS notes TEXT",
+    "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assignee_name TEXT",
   ];
   for (const sql of migrations) {
     try { await pool.query(sql); } catch(e) { /* column may already exist */ }
@@ -352,9 +354,9 @@ app.post('/api/tasks', auth, async (req, res) => {
           const couple = await getCouple(req);
           if (!couple) return res.status(404).json({ error: 'No couple' });
           const id = uuidv4();
-          const { title, assignee } = req.body;
-          await pool.query('INSERT INTO tasks (id, couple_id, created_by, title, assignee) VALUES ($1,$2,$3,$4,$5)',
-                                 [id, couple.id, req.user.userId, title, assignee]);
+          const { title, assignee, notes } = req.body;
+          await pool.query('INSERT INTO tasks (id, couple_id, created_by, title, assignee, notes) VALUES ($1,$2,$3,$4,$5,$6)',
+                                 [id, couple.id, req.user.userId, title, assignee, notes || '']);
           const { rows } = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
           broadcast(couple.id, 'TASK_ADDED', rows[0], req.user.userId);
           res.json(rows[0]);
